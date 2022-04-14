@@ -14,7 +14,7 @@ from models.gce_loss import GceLoss
 from utils.news_dataset import NewsDataset
 
 
-def run_dvsfn(params):
+def run_dvlfn(params):
 
     train = pd.read_csv(os.path.join(params.data_dir, 'train.csv'))
     valid = pd.read_csv(os.path.join(params.data_dir, 'valid.csv'))
