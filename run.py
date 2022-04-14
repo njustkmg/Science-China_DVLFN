@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 
 from managers.trainer import train_epoch
 from managers.evaluator import evaluate
-from models.dvsfn_model import DVSFN
+from models.dvlfn_model import DVLFN
 from models.gce_loss import GceLoss
 from utils.news_dataset import NewsDataset
 
@@ -47,7 +47,7 @@ def run_dvsfn(params):
     valid_loader = DataLoader(valid_dataset, batch_size=params.batch_size, shuffle=False)
     test_loader = DataLoader(test_dataset, batch_size=params.batch_size, shuffle=False)
 
-    model = DVSFN(
+    model = DVLFN(
         hidden_dim=params.hidden_dim,
         max_len=params.max_len,
         num_statistic=train_statistic.shape[1],
@@ -91,11 +91,11 @@ if __name__ == '__main__':
 
     import argparse
 
-    parser = argparse.ArgumentParser(description='DVSFN model')
+    parser = argparse.ArgumentParser(description='DVLFN model')
 
     # Experiment setup params
     parser.add_argument('--device', type=str, default='cuda:0')
-    parser.add_argument('--model_name', type=str, default='dvsfn.pt')
+    parser.add_argument('--model_name', type=str, default='dvlfn.pt')
     parser.add_argument('--checkpoint_dir', type=str, default='checkpoint')
     parser.add_argument('--data_dir', type=str, default='../data/',
                         help='Directory for text and label')
@@ -131,5 +131,5 @@ if __name__ == '__main__':
     if not os.path.isdir(params.checkpoint_dir):
         os.mkdir(params.checkpoint_dir)
 
-    run_dvsfn(params)
+    run_dvlfn(params)
 
