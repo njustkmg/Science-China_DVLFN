@@ -1,6 +1,6 @@
-# DVSFN - News Detection
+# DVLFN - News Detection
 
-This is the implement of the paper **Deep Visual-Semantic Fusion Network Considering Cross-Modal Inconsistency for Rumor Detection**.
+This is the implement of the paper **Deep Visual-Linguistic Fusion Network Considering Cross-Modal Inconsistency for Rumor Detection**.
 
 ## Requirements
 
@@ -15,7 +15,7 @@ pandas==1.1.4
 
 ## Experiments
 
-To start training a DVSFN model, run the following command.
+To start training a DVLFN model, run the following command.
 
  `python run.py`
 
