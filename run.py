@@ -1,21 +1,24 @@
 import os
+import argparse
 import numpy as np
 import pandas as pd
-
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader
-
+import mindspore
+from mindspore import context
+from mindspore import nn, Tensor, Model
+from mindspore.nn.metrics import Accuracy, Precision, F1, Recall
 from managers.trainer import train_epoch
 from managers.evaluator import evaluate
 from models.dvlfn_model import DVLFN
 from models.gce_loss import GceLoss
 from utils.news_dataset import NewsDataset
+from mindspore.dataset import GeneratorDataset
+from mindspore.train.callback import ModelCheckpoint, CheckpointConfig
+from managers.train_ms import *
+from tqdm import tqdm
 
+def run_dvsfn(params):
 
-def run_dvlfn(params):
-
+    # get the data and generate dataset
     train = pd.read_csv(os.path.join(params.data_dir, 'train.csv'))
     valid = pd.read_csv(os.path.join(params.data_dir, 'valid.csv'))
     test = pd.read_csv(os.path.join(params.data_dir, 'test.csv'))
@@ -43,10 +46,14 @@ def run_dvlfn(params):
     train_dataset = NewsDataset(train_txt, train_label, train_global_img, train_region_img, train_statistic)
     valid_dataset = NewsDataset(valid_txt, valid_label, valid_global_img, valid_region_img, valid_statistic)
     test_dataset = NewsDataset(test_txt, test_label, test_global_img, test_region_img, test_statistic)
-    train_loader = DataLoader(train_dataset, batch_size=params.batch_size, shuffle=True)
-    valid_loader = DataLoader(valid_dataset, batch_size=params.batch_size, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=params.batch_size, shuffle=False)
+    train_loader = GeneratorDataset(train_dataset, ['ids', 'txt', 'img_global', 'img_region', 'social', 'label'], shuffle=False)
+    train_loader = train_loader.batch(params.batch_size)
+    valid_loader = GeneratorDataset(valid_dataset, ['ids', 'txt', 'img_global', 'img_region', 'social', 'label'], shuffle=False)
+    valid_loader = valid_loader.batch(params.batch_size)
+    test_loader = GeneratorDataset(test_dataset, ['ids', 'txt', 'img_global', 'img_region', 'social', 'label'], shuffle=False)
+    test_loader = test_loader.batch(params.batch_size)
 
+    # define the model
     model = DVLFN(
         hidden_dim=params.hidden_dim,
         max_len=params.max_len,
@@ -54,56 +61,93 @@ def run_dvlfn(params):
         device=params.device,
         gamma=params.gamma
     )
-    model.to(params.device)
-    optimizer = optim.Adam(list(model.parameters()), lr=params.lr, weight_decay=params.weight_decay)
 
+    # model.to(params.device)
+    optimizer = nn.Adam(list(model.trainable_params()), learning_rate=params.lr, weight_decay=params.weight_decay)
+
+    # declare the loss
     if params.use_gce:
-        criterion = GceLoss(num_train=len(train), device=params.device).to(params.device)
+        criterion = GceLoss(num_train=len(train))
     else:
-        criterion = nn.CrossEntropyLoss()
+        criterion = nn.SoftmaxCrossEntropyWithLogits()
 
-    best_acc = 0
-    patience = params.patience
+    # connect the forward network and loss funciton
+    # net_loss = nn.WithLossCell(model, criterion)
+    net_loss = WithLossCell_self(model, criterion)
+    tran_net = Dvlfn_TrainOneStepCell(net_loss, optimizer)
 
+    tran_net.set_train()
     for epoch in range(params.epoch):
-        train_loss = train_epoch(params, epoch, model, train_loader, criterion, optimizer)
-        valid_result = evaluate(params, model, valid_loader, criterion)
+        train_tqdm = tqdm(train_loader)
+        # if epoch >= params.start_prune and epoch % 5 == 0:
+        #     # prune weight for generalize cross-entropy
+        #     train_tqdm = tqdm(train_loader)
+        #     for batch in train_tqdm:
+        #         index, txt, img_global, img_region, social, label = batch
+        #         index = index.asnumpy().tolist()
+        #         out = model(txt, img_global, img_region,
+        #                     social).squeeze()
+        #         criterion.update_weight(out, label, index)
+        all_loss = []
+        for batch in train_tqdm:
+            index, txt, img_global, img_region, social, label = batch
+            index = index.asnumpy().tolist()
+            # print(1)
+            # print('-'*40)
+            loss = net_loss(txt, img_global, img_region, social, label, index)
+            loss = loss.asnumpy().tolist()
+            # print(loss)
+            tran_net(txt, img_global, img_region, social, label, index)
+            # print(loss)
+            # print(type(loss))
+            # print(loss)
+            all_loss.append(loss)
+            # print(all_loss)
+            # print('-'*40)
+            train_tqdm.set_description("Loss: %f" % (np.mean(all_loss)))
 
-        if valid_result['acc'] > best_acc:
-            best_acc = valid_result['acc']
-            torch.save(model, os.path.join(params.checkpoint_dir, params.model_name))
-            patience = params.patience
-        else:
-            patience -= 1
-            if patience <= 0:
-                break
-        print("Epoch {:02d} | Train Loss {:3f} | Best Acc {:3f}".format(epoch, train_loss, best_acc))
-        print(valid_result)
 
-    model = torch.load(os.path.join(params.checkpoint_dir, params.model_name))
-    model.to(params.device)
-    test_result = evaluate(params, model, test_loader, criterion)
-    print('Finishing test: ')
-    print(test_result)
+
+
+
+   # for epoch in range(params.epoch):
+    #     train_loss = train_epoch(params, epoch, model, train_loader, criterion, optimizer)
+    #     valid_result = evaluate(params, model, valid_loader, criterion)
+    #
+    #     if valid_result['acc'] > best_acc:
+    #         best_acc = valid_result['acc']
+    #         mindspore.save_checkpoint(model, os.path.join(params.checkpoint_dir, params.model_name))
+    #         patience = params.patience
+    #     else:
+    #         patience -= 1
+    #         if patience <= 0:
+    #             break
+    #     print("Epoch {:02d} | Train Loss {:3f} | Best Acc {:3f}".format(epoch, train_loss, best_acc))
+    #     print(valid_result)
+
+
+    # model = mindspore.load_checkpoint(os.path.join(params.checkpoint_dir, params.model_name))
+    # model.to(params.device)
+    # test_result = evaluate(params, model, test_loader, criterion)
+    # print('Finishing test: ')
+    # print(test_result)
 
 
 if __name__ == '__main__':
-
-    import argparse
-
-    parser = argparse.ArgumentParser(description='DVLFN model')
+    parser = argparse.ArgumentParser(description='DVSFN model')
+    parser.add_argument('--device_target', type=str, default="GPU", choices=['Ascend', 'GPU', 'CPU'])
 
     # Experiment setup params
     parser.add_argument('--device', type=str, default='cuda:0')
-    parser.add_argument('--model_name', type=str, default='dvlfn.pt')
+    parser.add_argument('--model_name', type=str, default='dvsfn.pt')
     parser.add_argument('--checkpoint_dir', type=str, default='checkpoint')
-    parser.add_argument('--data_dir', type=str, default='../data/',
+    parser.add_argument('--data_dir', type=str, default='./data/',
                         help='Directory for text and label')
-    parser.add_argument('--region_dir', type=str, default='../data/fastrcnn/',
+    parser.add_argument('--region_dir', type=str, default='./data/fastrcnn/',
                         help='Directory for extracted region image features')
-    parser.add_argument('--global_dir', type=str, default='../data/resnet101/',
+    parser.add_argument('--global_dir', type=str, default='./data/resnet101/',
                         help='Directory for extracted global image features')
-    parser.add_argument('--statistic_dir', type=str, default='../data/statistic/',
+    parser.add_argument('--statistic_dir', type=str, default='./data/statistic/',
                         help='Directory for extracted statistical features')
 
     # Training params
@@ -113,7 +157,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--patience', type=int, default=5,
                         help='Early stopping patience')
-    parser.add_argument('--use_gce', type=bool, default=True,
+    parser.add_argument('--use_gce', type=bool, default=False,
                         help='Whether to use generalize cross-entropy')
     parser.add_argument('--start_prune', type=int, default=10,
                         help='Staring prune weight for generalize cross-entropy')
@@ -125,11 +169,10 @@ if __name__ == '__main__':
                         help='Max sequence length for bert')
     parser.add_argument('--gamma', type=float, default=0.01,
                         help='For smooth wasserstein distance prediction')
+    # params = parser.parse_args()
+    params = parser.parse_known_args()[0]
+    # set information of model
+    context.set_context(mode=context.GRAPH_MODE, device_target=params.device_target)
 
-    params = parser.parse_args()
-
-    if not os.path.isdir(params.checkpoint_dir):
-        os.mkdir(params.checkpoint_dir)
-
-    run_dvlfn(params)
+    run_dvsfn(params)
 
