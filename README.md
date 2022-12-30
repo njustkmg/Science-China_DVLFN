@@ -2,6 +2,7 @@
 
 This is the implement of the paper **Deep Visual-Linguistic Fusion Network Considering Cross-Modal Inconsistency for Rumor Detection**.
 
+Science China Information Sciences, 2022
 ## Requirements
 
 ```
